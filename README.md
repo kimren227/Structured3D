@@ -116,7 +116,7 @@ python generate_pointcloud.py --data_path /path/to/dataset --save_path /path/to/
 ```
 
 <p align="center">
-<img src="assets/pointcloud/pointcloud_example.png" width="250">
+<img src="assets/pointcloud/pointcloud_example.png" width="500">
 </p>
 
 ## Citation
