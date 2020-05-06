@@ -109,6 +109,16 @@ python visualize_bbox.py --path /path/to/dataset --scene scene_id
 <img src="assets/bbox/scene_00000_490854_2.png" width="250">
 </p>
 
+### Generate point clouds
+
+```bash
+python generate_pointcloud.py --data_path /path/to/dataset --save_path /path/to/save_dir --export_ply --export_npy
+```
+
+<p align="center">
+<img src="assets/pointcloud/pointcloud_example.png" width="250">
+</p>
+
 ## Citation
 
 Please cite `Structured3D` in your publications if it helps your research:
