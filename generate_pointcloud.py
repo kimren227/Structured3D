@@ -107,6 +107,15 @@ class PointCloudReader():
             pcd.colors = open3d.utility.Vector3dVector(self.point_cloud['colors'])
         open3d.visualization.draw_geometries([pcd])
 
+    def get_open3d_ppointcloud(self):
+        pcd = open3d.geometry.PointCloud()
+        pcd.points = open3d.utility.Vector3dVector(self.point_cloud['coords'])
+        if self.generate_normal:
+            pcd.normals = open3d.utility.Vector3dVector(self.point_cloud['normals'])
+        if self.generate_color:
+            pcd.colors = open3d.utility.Vector3dVector(self.point_cloud['colors'])
+        return pcd
+
     def export_ply(self, path):
         # Save ASCII ply file for visulization
         '''
