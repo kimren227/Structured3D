@@ -2,36 +2,35 @@ import open3d as o3d
 import numpy as np
 import random
 import json
-from generate_pointcloud import PointCloudReader
+
 class PlaneRenderer():
 
     def __init__(self, planes, bbox=[-100,-100,-100,100,100,100]):
-        # plane are defined by the nearest point on plane to origin
-        # eg. [1,0,0] defines a plane parallel to yz plane with offset 1
+        # plane are defined by a normal vector and a offset along the normal direction
+        # eg. [1,0,0,10] defines a plane parallel to yz plane with offset 10
+        # planes N*4
         self.planes = np.asarray(planes)
         self.bbox = bbox
         self.resolution = 0.5
-        self.visualization_thickness = 0.02
         self.mesh = []
 
     def sample_points(self):
         vis_plane = []
         for plane in self.planes:
-            # make largest number as demoninator
-            index = np.abs(plane).argsort()
+            # If the plane are oriented vertically, filp it to calculate and filp back
+            normal = plane[:3]
+            index = np.abs(normal).argsort()
             reverse_index = np.argsort(index)
-            plane = plane[index]
+            plane[:3] = normal[index]
             points = []
 
             for x in [self.bbox[0], self.bbox[3]]:
                 for y in [self.bbox[1], self.bbox[4]]:
-                    z = self.calculate(plane, x, y) + self.visualization_thickness
-                    points.append(np.asarray([x,y,z]+plane)[reverse_index])
+                    z = self.calculate(plane, x, y)
+                    points.append(np.asarray([x,y,z])[reverse_index])
 
             color = tuple(np.random.randint(256, size=3))
             color = [np.asarray(color)/255.0]*4
-            plane = o3d.geometry.PointCloud()
-            plane.points = o3d.utility.Vector3dVector(np.stack(points))
             mesh = o3d.geometry.TriangleMesh()
             mesh.vertices = o3d.utility.Vector3dVector(np.asarray(points))
             mesh.vertex_colors = o3d.utility.Vector3dVector(color)
@@ -48,7 +47,7 @@ class PlaneRenderer():
         return
 
     def calculate(self, plane, x, y):
-        return -(plane[0]*x+plane[1]*y)/plane[2]
+        return (plane[3]-plane[0]*x-plane[1]*y)/plane[2]
 
     def export_ply(self,export_path):
         if len(self.mesh)==0:
@@ -96,15 +95,13 @@ def parse_planes(file_path):
     planes = []
     for p in planes_data:
         offset = p['offset']
-        if offset==0:
-            offset = 0.0001
-        planes.append(np.asarray(p['normal'])*float(offset/100.0))
+        planes.append(np.asarray(p['normal']+[offset/100.0]))
     return planes
 
 
 if __name__ == "__main__":
-    scene = '/media/daxuan/DATA/Dataset/Structured3d/Structured3D/scene_00000'
-    planes = parse_planes('example.json')
+    # scene = '/media/daxuan/DATA/Dataset/Structured3d/Structured3D/scene_00000'
+    planes = parse_planes('/media/daxuan/DATA/Dataset/Structured3d/Structured3D/scene_00001/annotation_3d.json')
     renderer = PlaneRenderer(planes)
     renderer.visualize()
     renderer.export_ply('planes.ply')
