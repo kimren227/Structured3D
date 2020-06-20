@@ -6,23 +6,31 @@ import open3d
 import os
 from sklearn.preprocessing import normalize
 from tqdm import tqdm
-
+import json
+from multiprocessing import Pool
 
 class PointCloudReader():
 
-    def __init__(self, path, resolution="full", random_level=0, generate_color=False, generate_normal=False):
+    def __init__(self, path, resolution="empty", random_level=0, generate_color=False, generate_normal=False, generate_semantic=False):
         self.path = path
         self.random_level = random_level
         self.resolution = resolution
         self.generate_color = generate_color
+        self.generate_semantic = generate_semantic
         self.generate_normal = generate_normal
+        self.color_label = {"[183, 71, 78]":"ceiling", 
+        "[232, 199, 174]":"wall",
+        "[138, 223, 152]":"floor"}
+        self.label_id = {"other":0, "wall":3, "ceiling":1, "floor":2}
         sections = [p for p in os.listdir(os.path.join(path, "2D_rendering"))]
         self.depth_paths = [os.path.join(*[path, "2D_rendering", p, "panorama", self.resolution, "depth.png"]) for p in sections]
         self.rgb_paths = [os.path.join(*[path, "2D_rendering", p, "panorama", self.resolution, "rgb_coldlight.png"]) for p in sections]
         self.normal_paths = [os.path.join(*[path, "2D_rendering", p, "panorama", self.resolution, "normal.png"]) for p in sections]
+        self.semantic_paths = [os.path.join(*[path, "2D_rendering", p, "panorama", self.resolution, "semantic.png"]) for p in sections]
         self.camera_paths = [os.path.join(*[path, "2D_rendering", p, "panorama", "camera_xyz.txt"]) for p in sections]
         self.camera_centers = self.read_camera_center()
-        self.point_cloud = self.generate_point_cloud(self.random_level, color=self.generate_color, normal=self.generate_normal)
+        self.point_cloud = self.generate_point_cloud(self.random_level, color=self.generate_color, normal=self.generate_normal, semantic=self.generate_semantic)
+
 
     def read_camera_center(self):
         camera_centers = []
@@ -50,10 +58,11 @@ class PointCloudReader():
             return False
 
 
-    def generate_point_cloud(self, random_level=0, color=False, normal=False):
+    def generate_point_cloud(self, random_level=0, color=False, normal=False, semantic=False):
         coords = []
         colors = []
         normals = []
+        labels = []
         points = {}
         # Getting Coordinates
         for i in range(len(self.depth_paths)):
@@ -89,11 +98,52 @@ class PointCloudReader():
                 for j in range(len(normals)):
                     # Normal map may not be correct, filp if we need to
                     normals[j] = self.filp_if_needed(coords[j], self.camera_centers[i], normals[j])
+            
+            if semantic:
+                semantic_img = cv2.imread(self.semantic_paths[i])
+                for x in range(semantic_img.shape[0]):
+                    for y in range(semantic_img.shape[1]):
+                        label = str(list(semantic_img[x, y]))
+                        if label in self.color_label:
+                            labels.append(self.label_id[self.color_label[label]])
+                            # print(self.label_id[self.color_label[label]])
+                        else:
+                            labels.append(0)
+
 
         points['colors'] = np.asarray(colors)/255.0
         points['coords'] = np.asarray(coords)
         points['normals'] = np.asarray(normals)
+        points['labels'] = np.asarray(labels)
         return points
+
+    def get_all_planes(self):
+        with open(os.path.join(self.path, 'annotation_3d.json'),'r') as f:
+            data = json.load(f)
+        planes_data = data['planes']
+        planes = []
+        for p in planes_data:
+            offset = p['offset']
+            normal = p['normal']
+            planes.append(normal+[offset])
+        return np.asarray(planes)
+
+    def generate_plane_parameter_for_points(self, corrds, planes):
+        print(corrds.shape)
+        print('plane shape: ', end='')
+        print(planes.shape)
+        
+        c_planes = []
+        for point in corrds:
+            max_distance = abs(point.dot(planes[0][:3])-planes[0][-1])
+            closest_plane = planes[0]
+            for plane in planes[1:]:
+                distance = abs(point.dot(plane[:3])-plane[-1])
+                if distance < max_distance:
+                    closest_plane = plane
+            c_planes.append(closest_plane)
+        print(np.asarray(c_planes))
+        return np.asarray(c_planes)
 
     def get_point_cloud(self):
         return self.point_cloud
@@ -161,7 +211,34 @@ class PointCloudReader():
                 f.write(" ".join(list(map(str,data)))+'\n')
 
     def export_npy(self, path):
-        np.save(path, self.point_cloud)
+        coords = self.point_cloud['coords']
+        colors = self.point_cloud['colors']
+        normals = self.point_cloud['normals']
+        labels = self.point_cloud['labels']
+        new_coords = []
+        new_colors = []
+        new_normals = []
+        new_labels = []
+        for i in range(coords.shape[0]):
+            if labels[i]==0:
+                continue
+            else:
+                new_colors.append(colors[i])
+                new_normals.append(normals[i])
+                new_coords.append(coords[i])
+                new_labels.append(labels[i])
+        new_coords = np.asarray(new_coords)
+        new_colors = np.asarray(new_colors)
+        new_normals = np.asarray(new_normals)
+        pc = open3d.geometry.PointCloud()
+        pc.points = open3d.utility.Vector3dVector(new_coords)
+        pc.normals = open3d.utility.Vector3dVector(new_normals)
+        pc.colors = open3d.utility.Vector3dVector(new_colors)
+        downpcd = pc.voxel_down_sample(voxel_size=100)
+        down_coords = np.asarray(downpcd.points)
+        down_colors = np.asarray(downpcd.colors)
+        down_normals = np.asarray(downpcd.normals)
+        np.save(path, {'coords':down_coords, 'colors':down_colors, 'normals':down_normals})
         return path
 
 def parse_args():
@@ -176,7 +253,6 @@ def parse_args():
                         help="room id, -1 for all rooms registerd together", type=int)
     parser.add_argument('--export_ply', dest='ply', action='store_true')
     parser.add_argument('--export_npy', dest='npy', action='store_true')
-
     return parser.parse_args()
 
 
@@ -200,25 +276,22 @@ def prepare_dir(args):
     if not os.path.exists(args.save_path):
         os.mkdir(args.save_path)
 
+def export_npy(path_pair):
+    path, save_path = path_pair
+    reader = PointCloudReader(path, random_level=0, generate_color=True, generate_normal=True, generate_semantic=True)
+    filename = os.path.basename(path)+".npy"
+    reader.export_npy(os.path.join(save_path, filename))
+    print("Scene %s Finished..." % str(path))
+    return
+
 def main():
     args = parse_args()
     scene_path = args.data_path
     prepare_dir(args)
     processed_scenes = [i.split('.')[0] for i in os.listdir(args.save_path)]
-    scenes = [os.path.join(scene_path, i) for i in os.listdir(scene_path)]
-
-    for scene in tqdm(scenes):
-        if scene in processed_scenes:
-            continue
-
-        reader = PointCloudReader(scene, random_level=10, generate_color=True, generate_normal=False)
-
-        if args.npy:
-            filename = os.path.basename(scene)+".npy"
-            reader.export_npy(os.path.join(args.save_path, filename))
-        if args.ply:
-            filename = os.path.basename(scene)+".ply"
-            reader.export_ply(os.path.join(args.save_path, filename))
+    scenes = [[os.path.join(scene_path, i), args.save_path] for i in os.listdir(scene_path)]
+    pool = Pool(8)
+    pool.map(export_npy, scenes)
 
 if __name__ == "__main__":
     main()
